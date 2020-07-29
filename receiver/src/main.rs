@@ -157,13 +157,13 @@ fn bpsk_demod(samples: &mut Vec<Complex<f32>>, sps: f32) -> Vec<u8> {
         soft_demod[i-1] = s.arg();
     }
 
-    // generate sync filter taps for interpolator
+    // generate sinc filter taps for interpolator
     let mut taps: [f32; 1032] = [0.0; 1032];
     let mut offset = 0.0;
     let step = 0.25 / 129.0;
     for i in 0..129 {
         for itap in 0..8 {
-            taps[i*8+itap] = sinc(-4.0 + (itap as f32) + offset)
+            taps[i*8+itap] = sinc(-4.0 + (itap as f32) + offset) / 8.0;
         }
         offset += step;
     }
@@ -178,6 +178,7 @@ fn bpsk_demod(samples: &mut Vec<Complex<f32>>, sps: f32) -> Vec<u8> {
     let mut last_sample = 0.0;
 
     // perform clock recovery
+    let mut interpolated: Vec<f32> = vec![0.0; samples.len()-1];
     for i in 0..soft_demod.len() {
 
         // compute the interpolator filter coefficient offset
@@ -187,16 +188,15 @@ fn bpsk_demod(samples: &mut Vec<Complex<f32>>, sps: f32) -> Vec<u8> {
         if i >= 8 {
 
             // compute the dot product
-            let mut out : f32 = 0.0;
             for si in 0..8 {
-                out += taps[filter_offset] * soft_demod[i-si];
+                interpolated[i] += taps[filter_offset+si] * soft_demod[i-si];
             }
-            soft_demod[i] = out;
+            soft_demod[i] = interpolated[i];
         }
 
         // calculate the error value (Muller & Mueller)
-        let error = slice(last_sample) * soft_demod[i] - slice(soft_demod[i]) * last_sample;
-        last_sample = soft_demod[i];
+        let error = slice(last_sample) * interpolated[i] - slice(interpolated[i]) * last_sample;
+        last_sample = interpolated[i];
 
         // update the actual samples per symbol
         sps_actual = sps_actual + gain_sps * error;
@@ -209,8 +209,8 @@ fn bpsk_demod(samples: &mut Vec<Complex<f32>>, sps: f32) -> Vec<u8> {
 
     // slice the bits
     let mut bits: Vec<u8> = vec![Default::default(); samples.len()/2-1];
-    for i in (2..soft_demod.len()).step_by(2) {
-        if soft_demod[i] < 0.0 { bits[i/2-1] = 0; }
+    for i in (2..interpolated.len()).step_by(2) {
+        if interpolated[i] < 0.0 { bits[i/2-1] = 0; }
         else { bits[i/2-1] = 1; }
     }
 
